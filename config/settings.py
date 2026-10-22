@@ -58,6 +58,7 @@ REST_FRAMEWORK = {
         "anon": "100/day",
         "user": "1000/day",
         "auth": "30/minute",
+        "telemetry": "120/minute",
     },
 }
 
