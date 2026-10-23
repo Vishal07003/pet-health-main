@@ -1,6 +1,6 @@
 from django.utils import timezone
 from rest_framework import serializers
-from .models import Pet
+from .models import Pet, WeightRecord, MedicalRecord, VetAppointment
 
 
 class PetSerializer(serializers.ModelSerializer):
@@ -45,3 +45,46 @@ class PetSerializer(serializers.ModelSerializer):
             if value > 200:
                 raise serializers.ValidationError("Weight cannot exceed 200 kg.")
         return value
+
+
+class WeightRecordSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = WeightRecord
+        fields = ["id", "pet", "weight_kg", "recorded_at", "notes", "created_at"]
+        read_only_fields = ["id", "created_at"]
+
+
+class MedicalRecordSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MedicalRecord
+        fields = [
+            "id",
+            "pet",
+            "record_type",
+            "title",
+            "administered_at",
+            "next_due_date",
+            "batch_number",
+            "veterinarian",
+            "clinic_name",
+            "notes",
+            "created_at",
+        ]
+        read_only_fields = ["id", "created_at"]
+
+
+class VetAppointmentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = VetAppointment
+        fields = [
+            "id",
+            "pet",
+            "title",
+            "appointment_date",
+            "veterinarian",
+            "clinic_name",
+            "reason",
+            "status",
+            "created_at",
+        ]
+        read_only_fields = ["id", "created_at"]

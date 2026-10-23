@@ -1,8 +1,13 @@
 from rest_framework import viewsets, permissions, filters
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema, extend_schema_view
-from .models import Pet
-from .serializers import PetSerializer
+from .models import Pet, WeightRecord, MedicalRecord, VetAppointment
+from .serializers import (
+    PetSerializer,
+    WeightRecordSerializer,
+    MedicalRecordSerializer,
+    VetAppointmentSerializer,
+)
 from .permissions import IsOwner
 
 
@@ -38,3 +43,70 @@ class PetViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         # The authenticated user is strictly assigned as the owner
         serializer.save(owner=self.request.user)
+
+
+class WeightRecordViewSet(viewsets.ModelViewSet):
+    serializer_class = WeightRecordSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False) or not self.request.user.is_authenticated:
+            return WeightRecord.objects.none()
+        qs = WeightRecord.objects.filter(pet__owner=self.request.user)
+        pet_id = self.request.query_params.get("pet") or self.request.query_params.get("pet_id")
+        if pet_id:
+            qs = qs.filter(pet_id=pet_id)
+        return qs
+
+    def perform_create(self, serializer):
+        # Ensure pet belongs to authenticated user
+        pet = serializer.validated_data.get("pet")
+        if pet.owner != self.request.user:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("You do not own this pet.")
+        record = serializer.save()
+        # Optionally update latest weight on pet
+        pet.weight_kg = record.weight_kg
+        pet.save(update_fields=["weight_kg"])
+
+
+class MedicalRecordViewSet(viewsets.ModelViewSet):
+    serializer_class = MedicalRecordSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False) or not self.request.user.is_authenticated:
+            return MedicalRecord.objects.none()
+        qs = MedicalRecord.objects.filter(pet__owner=self.request.user)
+        pet_id = self.request.query_params.get("pet") or self.request.query_params.get("pet_id")
+        if pet_id:
+            qs = qs.filter(pet_id=pet_id)
+        return qs
+
+    def perform_create(self, serializer):
+        pet = serializer.validated_data.get("pet")
+        if pet.owner != self.request.user:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("You do not own this pet.")
+        serializer.save()
+
+
+class VetAppointmentViewSet(viewsets.ModelViewSet):
+    serializer_class = VetAppointmentSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False) or not self.request.user.is_authenticated:
+            return VetAppointment.objects.none()
+        qs = VetAppointment.objects.filter(pet__owner=self.request.user)
+        pet_id = self.request.query_params.get("pet") or self.request.query_params.get("pet_id")
+        if pet_id:
+            qs = qs.filter(pet_id=pet_id)
+        return qs
+
+    def perform_create(self, serializer):
+        pet = serializer.validated_data.get("pet")
+        if pet.owner != self.request.user:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("You do not own this pet.")
+        serializer.save()
