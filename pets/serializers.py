@@ -27,6 +27,8 @@ class PetSerializer(serializers.ModelSerializer):
             "weight_kg",
             "is_neutered",
             "microchip_number",
+            "photo",
+            "avatar_id",
             "notes",
             "owner",
             "owner_id",

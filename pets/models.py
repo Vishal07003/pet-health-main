@@ -38,6 +38,8 @@ class Pet(models.Model):
     )
     is_neutered = models.BooleanField(default=False)
     microchip_number = models.CharField(max_length=50, blank=True, default="")
+    photo = models.ImageField(upload_to="pet_photos/", null=True, blank=True)
+    avatar_id = models.CharField(max_length=50, blank=True, default="")
     notes = models.TextField(blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
