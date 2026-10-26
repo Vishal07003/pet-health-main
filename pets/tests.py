@@ -163,3 +163,206 @@ class PetAPITests(APITestCase):
         delete_res = self.client.delete(self.detail_url_pet1)
         self.assertEqual(delete_res.status_code, status.HTTP_204_NO_CONTENT)
         self.assertFalse(Pet.objects.filter(id=self.pet1.id).exists())
+
+
+class FoodWaterLogAPITests(APITestCase):
+    def setUp(self):
+        self.user1 = User.objects.create_user(
+            username="owner_alice",
+            email="alice@example.com",
+            password="AlicePassword123!",
+        )
+        self.user2 = User.objects.create_user(
+            username="owner_bob",
+            email="bob@example.com",
+            password="BobPassword123!",
+        )
+        self.pet1 = Pet.objects.create(
+            name="Bella",
+            species=Pet.Species.DOG,
+            breed="Golden Retriever",
+            sex=Pet.Sex.FEMALE,
+            weight_kg=Decimal("28.50"),
+            owner=self.user1,
+        )
+        self.pet2 = Pet.objects.create(
+            name="Milo",
+            species=Pet.Species.CAT,
+            breed="Persian",
+            sex=Pet.Sex.MALE,
+            weight_kg=Decimal("4.50"),
+            owner=self.user2,
+        )
+        self.list_url = reverse("pet-food-water-list")
+        self.daily_totals_url = reverse("pet-food-water-daily-totals")
+
+    def test_unauthenticated_requests_rejected(self):
+        res = self.client.get(self.list_url)
+        self.assertEqual(res.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_owner_can_log_food_and_water(self):
+        self.client.force_authenticate(user=self.user1)
+
+        # Log food
+        food_res = self.client.post(
+            self.list_url,
+            {
+                "pet": str(self.pet1.id),
+                "intake_type": "food",
+                "amount": "250.00",
+                "unit": "g",
+                "notes": "Morning dry kibble portion",
+            },
+            format="json",
+        )
+        self.assertEqual(food_res.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(food_res.data["is_manual_entry"], True)
+        self.assertEqual(food_res.data["amount"], "250.00")
+        self.assertEqual(food_res.data["unit"], "g")
+
+        # Log water
+        water_res = self.client.post(
+            self.list_url,
+            {
+                "pet": str(self.pet1.id),
+                "intake_type": "water",
+                "amount": "450.00",
+                "unit": "ml",
+                "notes": "Clean bowl refilled",
+            },
+            format="json",
+        )
+        self.assertEqual(water_res.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(water_res.data["is_manual_entry"], True)
+        self.assertEqual(water_res.data["amount"], "450.00")
+        self.assertEqual(water_res.data["unit"], "ml")
+
+    def test_validation_rejects_negative_or_zero_or_excessive_amount(self):
+        self.client.force_authenticate(user=self.user1)
+
+        # Zero amount
+        res_zero = self.client.post(
+            self.list_url,
+            {
+                "pet": str(self.pet1.id),
+                "intake_type": "food",
+                "amount": "0.00",
+                "unit": "g",
+            },
+            format="json",
+        )
+        self.assertEqual(res_zero.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("amount", res_zero.data)
+
+        # Excessive amount > 10000
+        res_huge = self.client.post(
+            self.list_url,
+            {
+                "pet": str(self.pet1.id),
+                "intake_type": "water",
+                "amount": "12000.00",
+                "unit": "ml",
+            },
+            format="json",
+        )
+        self.assertEqual(res_huge.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("amount", res_huge.data)
+
+    def test_validation_rejects_incompatible_unit(self):
+        self.client.force_authenticate(user=self.user1)
+
+        # Incompatible unit: e.g. liquid unit for food or grams for water
+        res = self.client.post(
+            self.list_url,
+            {
+                "pet": str(self.pet1.id),
+                "intake_type": "water",
+                "amount": "500.00",
+                "unit": "g",
+            },
+            format="json",
+        )
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("unit", res.data)
+
+    def test_owner_cannot_log_or_view_another_owners_pet_records(self):
+        # Alice tries to log consumption for Bob's pet
+        self.client.force_authenticate(user=self.user1)
+        res_cross = self.client.post(
+            self.list_url,
+            {
+                "pet": str(self.pet2.id),
+                "intake_type": "food",
+                "amount": "100.00",
+                "unit": "g",
+            },
+            format="json",
+        )
+        self.assertEqual(res_cross.status_code, status.HTTP_403_FORBIDDEN)
+
+        # Bob logs for his own pet
+        self.client.force_authenticate(user=self.user2)
+        res_bob = self.client.post(
+            self.list_url,
+            {
+                "pet": str(self.pet2.id),
+                "intake_type": "food",
+                "amount": "80.00",
+                "unit": "g",
+            },
+            format="json",
+        )
+        self.assertEqual(res_bob.status_code, status.HTTP_201_CREATED)
+        bob_record_id = res_bob.data["id"]
+
+        # Alice cannot see Bob's record in listing
+        self.client.force_authenticate(user=self.user1)
+        res_alice_list = self.client.get(self.list_url)
+        self.assertEqual(res_alice_list.status_code, status.HTTP_200_OK)
+        alice_ids = [r["id"] for r in res_alice_list.data]
+        self.assertNotIn(bob_record_id, alice_ids)
+
+        # Alice cannot retrieve Bob's record directly
+        detail_url = reverse("pet-food-water-detail", kwargs={"pk": bob_record_id})
+        res_alice_get = self.client.get(detail_url)
+        self.assertEqual(res_alice_get.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_daily_totals_aggregation_and_missing_data_handling(self):
+        self.client.force_authenticate(user=self.user1)
+
+        # Prior to any logging, daily-totals returns has_data=False and empty totals (NOT treating missing as zero)
+        res_empty = self.client.get(self.daily_totals_url, {"pet_id": str(self.pet1.id)})
+        self.assertEqual(res_empty.status_code, status.HTTP_200_OK)
+        self.assertFalse(res_empty.data["has_data"])
+        self.assertEqual(res_empty.data["totals"], [])
+
+        # Add two food meals (200g, 150g) and one water intake (350ml)
+        self.client.post(
+            self.list_url,
+            {"pet": str(self.pet1.id), "intake_type": "food", "amount": "200.00", "unit": "g"},
+            format="json",
+        )
+        self.client.post(
+            self.list_url,
+            {"pet": str(self.pet1.id), "intake_type": "food", "amount": "150.00", "unit": "g"},
+            format="json",
+        )
+        self.client.post(
+            self.list_url,
+            {"pet": str(self.pet1.id), "intake_type": "water", "amount": "350.00", "unit": "ml"},
+            format="json",
+        )
+
+        res_totals = self.client.get(self.daily_totals_url, {"pet_id": str(self.pet1.id)})
+        self.assertEqual(res_totals.status_code, status.HTTP_200_OK)
+        self.assertTrue(res_totals.data["has_data"])
+        totals_map = {f"{t['intake_type']}_{t['unit']}": t for t in res_totals.data["totals"]}
+
+        self.assertIn("food_g", totals_map)
+        self.assertEqual(totals_map["food_g"]["total_amount"], 350.0)
+        self.assertEqual(totals_map["food_g"]["entry_count"], 2)
+
+        self.assertIn("water_ml", totals_map)
+        self.assertEqual(totals_map["water_ml"]["total_amount"], 350.0)
+        self.assertEqual(totals_map["water_ml"]["entry_count"], 1)
+

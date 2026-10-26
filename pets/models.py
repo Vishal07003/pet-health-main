@@ -120,3 +120,99 @@ class VetAppointment(models.Model):
 
     def __str__(self):
         return f"{self.pet.name} - {self.title} on {self.appointment_date}"
+
+
+class BodyConditionScore(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    pet = models.ForeignKey(Pet, on_delete=models.CASCADE, related_name="bcs_records")
+    score = models.PositiveSmallIntegerField(
+        validators=[MinValueValidator(1), MaxValueValidator(9)],
+        help_text="WSAVA Body Condition Score on a 1-9 scale (4-5 ideal)",
+    )
+    assessor_source = models.CharField(
+        max_length=100,
+        default="Owner Assessment",
+        help_text="e.g. Owner Assessment, Dr. Sarah Chen DVM, Valley Vet Clinic",
+    )
+    palpation_notes = models.TextField(blank=True, default="")
+    silhouette_notes = models.TextField(blank=True, default="")
+    recorded_at = models.DateField(default=timezone.now)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-recorded_at"]
+
+    def __str__(self):
+        return f"{self.pet.name} - BCS {self.score}/9 on {self.recorded_at}"
+
+
+class ClinicalObservation(models.Model):
+    class ObservationCategory(models.TextChoices):
+        GAIT = "gait", "Mobility & Gait"
+        APPETITE = "appetite", "Appetite & Feeding"
+        HYDRATION = "hydration", "Hydration"
+        STOOL = "stool", "Stool Quality"
+        ENERGY = "energy", "Energy & Mood"
+        MEDICATION = "medication", "Medication Adherence"
+        COLLAR_FIT = "collar_fit", "Collar Fit / Skin"
+        OTHER = "other", "Other Observation"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    pet = models.ForeignKey(Pet, on_delete=models.CASCADE, related_name="clinical_observations")
+    category = models.CharField(
+        max_length=30,
+        choices=ObservationCategory.choices,
+        default=ObservationCategory.GAIT,
+    )
+    headline = models.CharField(max_length=200)
+    details = models.TextField()
+    is_shared_with_vet = models.BooleanField(default=False)
+    observed_at = models.DateTimeField(default=timezone.now)
+    is_manual_entry = models.BooleanField(default=True, editable=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-observed_at"]
+
+    def __str__(self):
+        return f"{self.pet.name} - [{self.category}] {self.headline} at {self.observed_at}"
+
+
+class FoodWaterLog(models.Model):
+    class IntakeType(models.TextChoices):
+        FOOD = "food", "Food / Meal"
+        WATER = "water", "Water / Hydration"
+
+    class Unit(models.TextChoices):
+        GRAMS = "g", "Grams (g)"
+        OUNCES = "oz", "Ounces (oz)"
+        CUPS = "cup", "Cups"
+        MILLILITERS = "ml", "Milliliters (ml)"
+        FLUID_OUNCES = "fl_oz", "Fluid Ounces (fl oz)"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    pet = models.ForeignKey(Pet, on_delete=models.CASCADE, related_name="food_water_logs")
+    intake_type = models.CharField(max_length=10, choices=IntakeType.choices, default=IntakeType.FOOD)
+    amount = models.DecimalField(
+        max_digits=7,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal("0.01"))],
+        help_text="Quantity consumed (strictly positive manually recorded quantity)",
+    )
+    unit = models.CharField(max_length=10, choices=Unit.choices, default=Unit.GRAMS)
+    logged_at = models.DateTimeField(default=timezone.now)
+    notes = models.TextField(blank=True, default="")
+    is_manual_entry = models.BooleanField(
+        default=True,
+        editable=False,
+        help_text="Flag indicating this record is owner/caregiver entered, not automatic telemetry.",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-logged_at"]
+
+    def __str__(self):
+        return f"{self.pet.name} - {self.intake_type} {self.amount}{self.unit} at {self.logged_at}"
+
+

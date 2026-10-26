@@ -197,3 +197,8 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# Firebase Cloud Messaging & Admin SDK Configuration
+FIREBASE_CREDENTIALS_PATH = os.getenv("GOOGLE_APPLICATION_CREDENTIALS") or os.getenv("FIREBASE_CREDENTIALS_PATH")
+FIREBASE_PROJECT_ID = os.getenv("FIREBASE_PROJECT_ID", "pet-healt-34afa")
+

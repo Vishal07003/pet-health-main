@@ -84,4 +84,24 @@ class ActivityInferenceEngine:
             confidence_score=confidence,
             is_simulation=is_simulation,
         )
+
+        # Trigger push alert on real anomaly (never send push alerts for simulated test data)
+        if anomaly_detected and not is_simulation:
+            try:
+                from notifications.models import Notification
+                from notifications.services import send_fcm_push
+                notif = Notification.objects.create(
+                    user=pet.owner,
+                    pet=pet,
+                    notification_type=Notification.NotificationType.ACTIVITY_ANOMALY,
+                    title=f"Activity Alert: {pet.name}",
+                    message=anomaly_reason,
+                    metadata={"summary_id": str(summary.id), "pet_id": str(pet.id)},
+                )
+                send_fcm_push(pet.owner, notif)
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning("Failed to dispatch anomaly notification: %s", e)
+
         return summary
+
