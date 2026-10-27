@@ -24,6 +24,8 @@ class TelemetryIngestSerializer(serializers.Serializer):
     """
     readings = TelemetryItemSerializer(many=True, required=True)
     is_simulation = serializers.BooleanField(required=False, default=False)
+    device_uid = serializers.CharField(required=False, allow_blank=True, default="")
+    pet_id = serializers.UUIDField(required=False, allow_null=True, default=None)
 
 
 class TelemetryReadingSerializer(serializers.ModelSerializer):

@@ -100,3 +100,61 @@ class TelemetryAPITests(APITestCase):
             HTTP_X_DEVICE_KEY="wrong_token",
         )
         self.assertIn(res.status_code, [status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN])
+
+    def test_jwt_authenticated_telemetry_ingest_owner_success(self):
+        self.client.force_authenticate(user=self.user)
+        payload = {
+            "is_simulation": True,
+            "pet_id": str(self.pet.id),
+            "device_uid": self.device.device_uid,
+            "readings": [
+                {
+                    "accel_x": 0.25,
+                    "accel_y": 1.05,
+                    "accel_z": 0.15,
+                    "battery_level": 85,
+                }
+            ],
+        }
+        res = self.client.post(self.ingest_url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(res.data["status"], "success")
+        self.assertEqual(res.data["ingested_count"], 1)
+
+    def test_jwt_authenticated_telemetry_ingest_unowned_pet_rejected(self):
+        other_user = User.objects.create_user(
+            username="unauthorized_owner",
+            email="uo@example.com",
+            password="Password123!",
+        )
+        self.client.force_authenticate(user=other_user)
+        payload = {
+            "is_simulation": True,
+            "pet_id": str(self.pet.id),
+            "readings": [
+                {"accel_x": 0.1, "accel_y": 1.0, "accel_z": 0.1}
+            ],
+        }
+        res = self.client.post(self.ingest_url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_jwt_authenticated_telemetry_ingest_unowned_device_rejected(self):
+        other_user = User.objects.create_user(
+            username="unowned_dev_user",
+            email="odu@example.com",
+            password="Password123!",
+        )
+        other_pet = Pet.objects.create(owner=other_user, name="Bella", species="cat")
+        self.client.force_authenticate(user=other_user)
+        # Trying to ingest using self.device (which belongs to self.user)
+        payload = {
+            "is_simulation": True,
+            "pet_id": str(other_pet.id),
+            "device_uid": self.device.device_uid,
+            "readings": [
+                {"accel_x": 0.1, "accel_y": 1.0, "accel_z": 0.1}
+            ],
+        }
+        res = self.client.post(self.ingest_url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+
