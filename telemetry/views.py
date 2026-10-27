@@ -144,11 +144,31 @@ class TelemetryIngestView(generics.CreateAPIView):
         latest_battery = None
         now = timezone.now()
 
+        # Step 1: Collect unique timestamps within the incoming batch to handle intra-batch duplicates
+        batch_timestamps = []
+        seen_batch_timestamps = set()
         for item in readings_data:
-            ts = item.get("timestamp", now)
-            # Duplicate prevention check (ignore duplicate timestamps for the same device)
-            if TelemetryReading.objects.filter(device=device, timestamp=ts).exists():
+            ts = item.get("timestamp") or now
+            if ts not in seen_batch_timestamps:
+                seen_batch_timestamps.add(ts)
+                batch_timestamps.append(ts)
+
+        # Step 2: Query database in a single batch query for timestamps already registered for this device
+        existing_timestamps = set(
+            TelemetryReading.objects.filter(
+                device=device,
+                timestamp__in=batch_timestamps,
+            ).values_list("timestamp", flat=True)
+        )
+
+        # Step 3: Filter incoming items - skip both database duplicates and repeated intra-batch timestamps
+        processed_timestamps = set()
+        for item in readings_data:
+            ts = item.get("timestamp") or now
+            if ts in existing_timestamps or ts in processed_timestamps:
                 continue
+
+            processed_timestamps.add(ts)
 
             accel_x = item["accel_x"]
             accel_y = item["accel_y"]
@@ -175,7 +195,7 @@ class TelemetryIngestView(generics.CreateAPIView):
                 latest_battery = item["battery_level"]
 
         if created_records:
-            TelemetryReading.objects.bulk_create(created_records)
+            TelemetryReading.objects.bulk_create(created_records, ignore_conflicts=True)
 
         # Update device last_seen and battery state
         device.last_seen_at = now

@@ -26,3 +26,5 @@ htmlcov/
 # IDE
 .vscode/
 .idea/
+# User-uploaded media and temporary test images
+media/

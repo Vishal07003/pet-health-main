@@ -50,6 +50,7 @@ class TelemetryReading(models.Model):
             models.Index(fields=["pet", "-timestamp"]),
             models.Index(fields=["device", "-timestamp"]),
             models.Index(fields=["is_simulation"]),
+            models.Index(fields=["pet", "is_simulation", "-timestamp"]),
         ]
         # Prevent exact duplicate telemetry submissions
         constraints = [
