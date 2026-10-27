@@ -46,6 +46,8 @@ class Notification(models.Model):
         INTAKE_ALERT = "intake_alert", "Intake Pattern Alert"
         VACCINE_REMINDER = "vaccine_reminder", "Vaccination / Deworming Due"
         BATTERY_LOW = "battery_low", "Collar Battery Low"
+        DAILY_SUMMARY = "daily_summary", "Daily Activity Summary"
+        WEEKLY_INSIGHTS = "weekly_insights", "Weekly Health Insights"
         SYSTEM = "system", "System Notice"
 
     class DeliveryStatus(models.TextChoices):
