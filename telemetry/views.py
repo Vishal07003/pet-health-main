@@ -80,6 +80,18 @@ class TelemetryIngestView(generics.CreateAPIView):
             device.battery_level = latest_battery
         device.save(update_fields=["last_seen_at", "battery_level", "updated_at"])
 
+        # When real or simulated readings are ingested for an assigned pet, compute window insights
+        if created_records and device.pet:
+            try:
+                from insights.services import ActivityInferenceEngine
+                ActivityInferenceEngine.compute_window_insights(
+                    pet=device.pet,
+                    is_simulation=is_simulation,
+                )
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning("Automatic insight computation on ingestion failed: %s", e)
+
         return Response(
             {
                 "status": "success",

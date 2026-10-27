@@ -1,6 +1,10 @@
 import logging
 import os
+from datetime import timedelta
+from typing import Dict, Any, Optional
+
 from django.conf import settings
+from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +49,7 @@ def get_firebase_app():
         return None
 
 
-def send_fcm_push(user, notification):
+def send_fcm_push(user, notification) -> Dict[str, Any]:
     """
     Sends FCM HTTP v1 push notification to all active devices registered for user.
     Updates notification delivery_status and delivery_attempts.
@@ -61,7 +65,7 @@ def send_fcm_push(user, notification):
 
     app = get_firebase_app()
     if app is None:
-        # Credentials not provided - record as queued/accepted for dev without crash
+        # Credentials not provided - record as queued for dev without crashing
         notification.delivery_status = Notification.DeliveryStatus.QUEUED
         notification.delivery_attempts += 1
         notification.delivery_error = "Firebase credentials not configured on backend."
@@ -128,3 +132,188 @@ def send_fcm_push(user, notification):
         notification.delivery_error = str(exc)[:500]
         notification.save(update_fields=["delivery_status", "delivery_attempts", "delivery_error"])
         return {"status": "error", "error": str(exc)}
+
+
+class NotificationDispatcher:
+    """
+    Centralized, duplicate-safe notification dispatcher for pet health events.
+    Enforces cooldown windows and duplicate prevention.
+    """
+
+    ANOMALY_COOLDOWN_HOURS = 2
+
+    @classmethod
+    def dispatch_activity_anomaly(
+        cls,
+        pet,
+        reason: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        is_simulation: bool = False,
+    ) -> Optional[Any]:
+        """
+        Triggers an immediate activity anomaly alert if:
+        1. Telemetry is REAL (is_simulation=False).
+        2. No duplicate anomaly alert was dispatched for this pet within ANOMALY_COOLDOWN_HOURS.
+        """
+        from .models import Notification
+
+        if is_simulation:
+            logger.info("Skipping real push notification for simulated anomaly on %s", pet.name)
+            return None
+
+        now = timezone.now()
+        cooldown_threshold = now - timedelta(hours=cls.ANOMALY_COOLDOWN_HOURS)
+
+        # Duplicate/Cooldown check
+        recent_exists = Notification.objects.filter(
+            pet=pet,
+            notification_type=Notification.NotificationType.ACTIVITY_ANOMALY,
+            created_at__gte=cooldown_threshold,
+        ).exists()
+
+        if recent_exists:
+            logger.info(
+                "Anomaly notification for %s suppressed by %dh cooldown window",
+                pet.name,
+                cls.ANOMALY_COOLDOWN_HOURS,
+            )
+            return None
+
+        notif = Notification.objects.create(
+            user=pet.owner,
+            pet=pet,
+            notification_type=Notification.NotificationType.ACTIVITY_ANOMALY,
+            title=f"Activity Alert: {pet.name}",
+            message=reason,
+            metadata=metadata or {},
+        )
+        send_fcm_push(pet.owner, notif)
+        return notif
+
+    @classmethod
+    def dispatch_daily_summary(
+        cls,
+        pet,
+        daily_metrics: Dict[str, Any],
+        target_date: Optional[timezone.datetime.date] = None,
+    ) -> Optional[Any]:
+        """
+        Dispatches daily summary notification if:
+        1. Sufficient real data exists (is_sufficient=True, samples >= 30).
+        2. No daily summary notification has already been sent for this pet and date.
+        """
+        from .models import Notification
+
+        date = target_date or timezone.now().date()
+        date_str = str(date)
+
+        if not daily_metrics.get("is_sufficient"):
+            logger.info(
+                "Skipping daily summary notification for %s on %s: insufficient samples (%d)",
+                pet.name,
+                date_str,
+                daily_metrics.get("total_samples", 0),
+            )
+            return None
+
+        # Duplicate check: check if daily_summary notification already sent for this pet & date
+        already_sent = Notification.objects.filter(
+            pet=pet,
+            notification_type=Notification.NotificationType.DAILY_SUMMARY,
+            metadata__summary_date=date_str,
+        ).exists()
+
+        if already_sent:
+            logger.info("Daily summary for %s on %s already dispatched", pet.name, date_str)
+            return None
+
+        active_mins = daily_metrics.get("total_moving_minutes", 0)
+        rest_mins = daily_metrics.get("rest_minutes", 0)
+        rest_hrs = round(rest_mins / 60.0, 1)
+
+        title = f"Daily Summary: {pet.name}"
+        message = (
+            f"{pet.name} logged {active_mins} active minutes and {rest_hrs} hours of rest today."
+        )
+
+        notif = Notification.objects.create(
+            user=pet.owner,
+            pet=pet,
+            notification_type=Notification.NotificationType.DAILY_SUMMARY,
+            title=title,
+            message=message,
+            metadata={
+                "summary_date": date_str,
+                "active_minutes": active_mins,
+                "rest_minutes": rest_mins,
+                "samples": daily_metrics.get("total_samples", 0),
+            },
+        )
+        send_fcm_push(pet.owner, notif)
+        return notif
+
+    @classmethod
+    def dispatch_weekly_insights(
+        cls,
+        pet,
+        analytics: Dict[str, Any],
+        week_end_date: Optional[timezone.datetime.date] = None,
+    ) -> Optional[Any]:
+        """
+        Dispatches weekly health insights notification if:
+        1. Baseline is established or multi-day real data exists.
+        2. No weekly notification has already been sent for this pet for this week ending date.
+        """
+        from .models import Notification
+
+        end_date = week_end_date or timezone.now().date()
+        end_date_str = str(end_date)
+
+        weekly_summary = analytics.get("weekly_summary", [])
+        total_samples = sum(day.get("total_samples", 0) for day in weekly_summary)
+        days_with_data = sum(1 for day in weekly_summary if day.get("total_samples", 0) >= 20)
+
+        if days_with_data < 3 or total_samples < 60:
+            logger.info(
+                "Skipping weekly insights for %s on %s: insufficient data (%d days with data)",
+                pet.name,
+                end_date_str,
+                days_with_data,
+            )
+            return None
+
+        # Duplicate check: check if weekly notification already sent for this pet in past 6 days
+        cooldown_cutoff = timezone.now() - timedelta(days=6)
+        already_sent = Notification.objects.filter(
+            pet=pet,
+            notification_type=Notification.NotificationType.WEEKLY_INSIGHTS,
+            created_at__gte=cooldown_cutoff,
+        ).exists()
+
+        if already_sent:
+            logger.info("Weekly insights for %s recently dispatched (within 6 days)", pet.name)
+            return None
+
+        avg_daily_active = round(
+            sum(d.get("total_moving_minutes", 0) for d in weekly_summary) / max(len(weekly_summary), 1)
+        )
+
+        title = f"Weekly Insights: {pet.name}"
+        insights = analytics.get("personalized_insights", [])
+        top_insight = insights[0] if insights else f"{pet.name} averaged {avg_daily_active} mins/day active."
+        message = f"Weekly wellness review: {top_insight}"
+
+        notif = Notification.objects.create(
+            user=pet.owner,
+            pet=pet,
+            notification_type=Notification.NotificationType.WEEKLY_INSIGHTS,
+            title=title,
+            message=message,
+            metadata={
+                "week_end_date": end_date_str,
+                "days_with_data": days_with_data,
+                "avg_daily_active_minutes": avg_daily_active,
+            },
+        )
+        send_fcm_push(pet.owner, notif)
+        return notif
