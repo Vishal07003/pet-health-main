@@ -201,20 +201,16 @@ class ActivityInferenceEngine:
             is_simulation=is_simulation,
         )
 
-        # Trigger push notification on real anomalies only (never for simulations)
+        # Trigger push notification on real anomalies only (never for simulations) with duplicate/cooldown protection
         if anomaly_detected and not is_simulation:
             try:
-                from notifications.models import Notification
-                from notifications.services import send_fcm_push
-                notif = Notification.objects.create(
-                    user=pet.owner,
+                from notifications.services import NotificationDispatcher
+                NotificationDispatcher.dispatch_activity_anomaly(
                     pet=pet,
-                    notification_type=Notification.NotificationType.ACTIVITY_ANOMALY,
-                    title=f"Activity Alert: {pet.name}",
-                    message=anomaly_reason,
+                    reason=anomaly_reason,
                     metadata={"summary_id": str(summary.id), "pet_id": str(pet.id)},
+                    is_simulation=is_simulation,
                 )
-                send_fcm_push(pet.owner, notif)
             except Exception as e:
                 logger.warning("Failed to dispatch anomaly notification: %s", e)
 
