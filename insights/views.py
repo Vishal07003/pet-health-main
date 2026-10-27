@@ -54,8 +54,18 @@ class GenerateInsightsView(APIView):
         is_simulation = request.query_params.get("is_simulation", "false").lower() == "true"
         summary = ActivityInferenceEngine.compute_window_insights(pet=pet, is_simulation=is_simulation)
         if not summary:
+            import logging
+            logging.getLogger(__name__).info(
+                "Generate insights: no telemetry readings found in the 60m window for pet %s (is_simulation=%s)",
+                pet.id,
+                is_simulation,
+            )
             return Response(
-                {"detail": "No telemetry readings available in the current window to generate insights."},
+                {
+                    "detail": "No telemetry readings available in the current window to generate insights.",
+                    "pet_id": str(pet.id),
+                    "is_simulation": is_simulation,
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
